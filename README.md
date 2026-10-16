@@ -69,7 +69,7 @@ After install, the browser half is a page-level module: **refresh the page** (or
 
 ## Compatibility
 
-- Declared in `package.json` as `engines.dsh: ">=0.1.7-rc.2 <0.2.0-0"`, so dsh-market can state the requirement on the plugin card. Verified on DSH **0.1.7-rc.2** (web and desktop).
+- Declared in `package.json` as `engines.dsh: ">=0.1.7-rc.2 <0.3.0-0"`, so dsh-market can state the requirement on the plugin card. Verified on DSH **0.1.7-rc.2** and **0.2.0-rc.2** (web and desktop).
 - Web UI only (`dsh.client.platform: "web"`): the fold chip, the chip band and the attachment upload all live in the browser half. The host half runs anywhere the bundle loader does.
 - No stock package is patched or replaced. The plugin uses public extension points only: an `inputTriggers` source, the `conversation.input.overlay` slot, the existing attachment upload, and the `agent/inbox/inserted` / `agent/pre-step` session events.
 

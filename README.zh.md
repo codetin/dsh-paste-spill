@@ -69,7 +69,7 @@ dsh plugin --profile web add github:winditer/dsh-paste-spill
 
 ## 兼容性
 
-- `package.json` 里声明 `engines.dsh: ">=0.1.7-rc.2 <0.2.0-0"`，dsh-market 因此能在插件卡上标出要求。已在 DSH **0.1.7-rc.2**（web 与 desktop）上验证。
+- `package.json` 里声明 `engines.dsh: ">=0.1.7-rc.2 <0.3.0-0"`，dsh-market 因此能在插件卡上标出要求。已在 DSH **0.1.7-rc.2** 与 **0.2.0-rc.2**（web 与 desktop）上验证。
 - 仅 Web UI（`dsh.client.platform: "web"`）：chip、chip 带、附件上传都在浏览器半；宿主半只要 bundle loader 能跑就行。
 - 不修改也不替换任何 stock 包。只用公开扩展点：`inputTriggers` source、`conversation.input.overlay` 槽位、既有附件上传，以及 `agent/inbox/inserted` / `agent/pre-step` 会话事件。
 
