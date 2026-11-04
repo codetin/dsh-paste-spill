@@ -3,3 +3,4 @@ research/
 dsh-image-gen/
 __pycache__/
 *.pyc
+*.tgz
