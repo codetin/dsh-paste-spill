@@ -556,10 +556,12 @@ test("the bundle registers under the package name and exports a plugin", () => {
   assert.deepEqual(exports.inject, ["slots", "conversation", "sessions", "locale", "inputTriggers"]);
 });
 
-test("thresholds are the agreed UTF-8 byte values", () => {
+test("the default thresholds are the agreed UTF-8 byte values", () => {
   const { exports } = loadBundle();
-  assert.equal(exports.__internals.FOLD_BYTES, 4000);
-  assert.equal(exports.__internals.SPILL_BYTES, 50000);
+  assert.equal(exports.__internals.DEFAULT_FOLD_BYTES, 4000);
+  assert.equal(exports.__internals.DEFAULT_SPILL_BYTES, 50000);
+  // The live pair starts at those defaults; nothing else may read a bare constant.
+  assert.deepEqual(exports.__internals.thresholds(), { foldBytes: 4000, spillBytes: 50000 });
 });
 
 test("utf8Bytes counts bytes, not characters", () => {
@@ -3310,9 +3312,9 @@ test("registerFoldSource installs a codec with clipboardText and serialize", () 
 // fix: a paragraph scanner that decides WHICH range is a paste, and a renderer that
 // draws that range as a card without touching the text the model receives.
 
-test("nextPasteSpan only cards a paragraph at or above the 4 KB threshold", () => {
-  const { nextPasteSpan, PASTE_CARD_BYTES } = loadBundle().exports.__internals;
-  assert.equal(PASTE_CARD_BYTES, 4000, "the transcript threshold follows the fold threshold");
+test("nextPasteSpan only cards a paragraph at or above the fold threshold", () => {
+  const { nextPasteSpan, pasteCardBytes } = loadBundle().exports.__internals;
+  assert.equal(pasteCardBytes(), 4000, "the transcript threshold follows the fold threshold");
   assert.equal(nextPasteSpan("x".repeat(3999), 0), undefined, "3999 bytes stays plain text");
   const span = nextPasteSpan("y".repeat(4000), 0);
   assert.ok(span, "4000 bytes cards");
@@ -3568,4 +3570,295 @@ test("a chip inserted after typed text opens a line of its own", async () => {
   // simply lands at the start of the next one.
   assert.equal(composer.projection().detectText, "keep this.\n\uFFFC\n",
     "the typed line is untouched and the chip sits on the next line");
+});
+
+// --- Configurable thresholds ------------------------------------------------
+//
+// 4000 and 50000 used to be constants. They are now the plugin's own Config, read
+// through the settings domain, so the pieces that can rot silently are: normalizing
+// whatever the form holds, routing by the live pair, and busting the transcript rule's
+// document cache when the pair moves.
+
+/** Depth-first search for the first element matching `predicate`. */
+function findNode(tree, predicate) {
+  let found;
+  const visit = (node) => {
+    if (found !== undefined || node === null || node === undefined) return;
+    if (Array.isArray(node)) {
+      node.forEach(visit);
+      return;
+    }
+    if (typeof node !== "object") return;
+    if (predicate(node)) {
+      found = node;
+      return;
+    }
+    if (Array.isArray(node.children)) node.children.forEach(visit);
+  };
+  visit(tree);
+  return found;
+}
+
+/** Every element matching `predicate`, in render order. */
+function findNodes(tree, predicate) {
+  const found = [];
+  const visit = (node) => {
+    if (node === null || node === undefined) return;
+    if (Array.isArray(node)) {
+      node.forEach(visit);
+      return;
+    }
+    if (typeof node !== "object") return;
+    if (predicate(node)) found.push(node);
+    if (Array.isArray(node.children)) node.children.forEach(visit);
+  };
+  visit(tree);
+  return found;
+}
+
+/**
+ * Load the bundle with a react stub whose hooks actually HOLD state, and render one
+ * component with the hook index reset per render (which is what react does).
+ */
+function statefulRender(componentName, props) {
+  const cells = [];
+  let index = 0;
+  const bundle = loadBundle({
+    useState: (initial) => {
+      const at = index;
+      index += 1;
+      if (!(at in cells)) cells[at] = typeof initial === "function" ? initial() : initial;
+      return [cells[at], (next) => { cells[at] = next; }];
+    },
+  });
+  const render = (nextProps = props) => {
+    index = 0;
+    return bundle.exports.__internals[componentName](nextProps);
+  };
+  return { bundle, render };
+}
+
+test("normalizeThresholds repairs anything the form or a hand edit can hold", () => {
+  const { normalizeThresholds } = loadBundle().exports.__internals;
+  assert.deepEqual(normalizeThresholds(undefined), { foldBytes: 4000, spillBytes: 50000, repaired: false });
+  assert.deepEqual(normalizeThresholds({ foldBytes: "4500", spillBytes: "60000" }), {
+    foldBytes: 4500,
+    spillBytes: 60000,
+    repaired: false,
+  });
+  assert.deepEqual(normalizeThresholds({ foldBytes: 4512.6 }), { foldBytes: 4513, spillBytes: 50000, repaired: false });
+  // Out-of-range values clamp to the schema bounds rather than disabling a layer.
+  assert.deepEqual(normalizeThresholds({ foldBytes: 10, spillBytes: 12 }), {
+    foldBytes: 1000,
+    spillBytes: 2000,
+    repaired: false,
+  });
+  // A fold threshold above the default spill threshold drags spill up with it: the
+  // layers may shrink but they never invert.
+  assert.deepEqual(normalizeThresholds({ foldBytes: 99999999 }), {
+    foldBytes: 1000000,
+    spillBytes: 1000001,
+    repaired: true,
+  });
+  // A config edited outside the UI cannot invert the two layers.
+  assert.deepEqual(normalizeThresholds({ foldBytes: 9000, spillBytes: 5000 }), {
+    foldBytes: 9000,
+    spillBytes: 9001,
+    repaired: true,
+  });
+  assert.deepEqual(normalizeThresholds({ foldBytes: Number.NaN, spillBytes: Infinity }), {
+    foldBytes: 4000,
+    spillBytes: 50000,
+    repaired: false,
+  });
+});
+
+test("setThresholds routes new pastes by the configured pair", () => {
+  const { setThresholds, decidePaste, thresholds } = loadBundle().exports.__internals;
+  assert.deepEqual(decidePaste("x".repeat(4000)), { action: "fold", bytes: 4000 });
+  assert.equal(setThresholds({ foldBytes: 8000, spillBytes: 90000 }), true);
+  assert.deepEqual(thresholds(), { foldBytes: 8000, spillBytes: 90000 });
+  assert.equal(decidePaste("x".repeat(4000)).action, "inline");
+  assert.equal(decidePaste("x".repeat(8000)).action, "fold");
+  assert.equal(decidePaste("x".repeat(90000)).action, "file");
+  assert.equal(setThresholds({ foldBytes: 8000, spillBytes: 90000 }), false, "an unchanged pair is not news");
+});
+
+test("a threshold change swaps the transcript rule so no message keeps a stale verdict", () => {
+  const { installTranscriptCard, setThresholds } = loadBundle().exports.__internals;
+  const registered = [];
+  const disposed = [];
+  const ctx = {
+    get: (name) =>
+      name === "uiConversation"
+        ? {
+            userText: {
+              register(rule) {
+                registered.push(rule);
+                return () => disposed.push(rule);
+              },
+            },
+          }
+        : undefined,
+    slots: { inject: (_key, register) => register(), register: () => () => {} },
+    effect: (fn) => fn(),
+  };
+  installTranscriptCard(ctx);
+  assert.equal(registered.length, 1);
+  setThresholds({ foldBytes: 8000, spillBytes: 90000 });
+  assert.equal(registered.length, 2, "a new rule object forces the document cache to re-evaluate");
+  assert.notEqual(registered[1], registered[0], "a fresh object, not the same one mutated");
+  assert.deepEqual(disposed, [registered[0]], "the old registration is released, not stacked");
+  setThresholds({ foldBytes: 8000, spillBytes: 90000 });
+  assert.equal(registered.length, 2, "an unchanged pair must not disturb the cache");
+});
+
+/**
+ * A settings context whose `configForms` serves one namespace.
+ * `fire()` replays the mirror subscription the way a host document change would.
+ */
+function stubSettingsCtx({ namespaces = ["paste-spill"], value = { foldBytes: 7000, spillBytes: 80000 } } = {}) {
+  const page = { registered: [] };
+  let mirrorListener = null;
+  let formListener = null;
+  const form = {
+    getSnapshot: () => ({ value, revision: 1 }),
+    subscribe: (listener) => {
+      formListener = listener;
+      return () => {};
+    },
+    mutate: (ops) => {
+      page.ops = ops;
+      return Promise.resolve(true);
+    },
+  };
+  const ctx = {
+    get: (name) => {
+      if (name === "uiConversation") return { userText: { register: () => () => {} } };
+      if (name !== "configForms") return undefined;
+      return {
+        describe: () => ({
+          getSnapshot: () => ({ view: { namespaces: namespaces.map((ns) => ({ ns })) } }),
+          subscribe: (listener) => {
+            mirrorListener = listener;
+            return () => {};
+          },
+          ensure: () => {},
+        }),
+        get: (ns) => {
+          page.namespace = ns;
+          return form;
+        },
+      };
+    },
+    slots: {
+      inject: (_key, register) => register(),
+      register: (entry) => {
+        page.registered.push(entry);
+        return () => {};
+      },
+    },
+    effect: (fn) => fn(),
+    locale: { bind: () => (key) => key, register: () => {} },
+  };
+  return {
+    ctx,
+    page,
+    form,
+    fire: () => {
+      if (mirrorListener !== null) mirrorListener();
+      if (formListener !== null) formListener();
+    },
+  };
+}
+
+test("installThresholds binds the served entry and follows the form", () => {
+  const { installThresholds, thresholds } = loadBundle().exports.__internals;
+  const { ctx, page, fire } = stubSettingsCtx();
+  installThresholds(ctx);
+  assert.equal(page.namespace, "paste-spill", "the form is addressed by the profile entry id");
+  assert.deepEqual(thresholds(), { foldBytes: 7000, spillBytes: 80000 });
+  const entry = page.registered.find((candidate) => candidate.name === "settings.plugins.tab");
+  assert.ok(entry, "the page goes into Settings -> Plugins");
+  assert.equal(entry.id, "paste-spill");
+  assert.equal(entry.order, 60);
+  assert.equal(typeof entry.label, "function");
+  assert.equal(entry.locale, "dsh-paste-spill");
+  assert.equal(typeof entry.inject().form.mutate, "function", "the page edits the bound form");
+  // A host-side write reaches the router without a remount.
+  fire();
+  assert.deepEqual(thresholds(), { foldBytes: 7000, spillBytes: 80000 });
+});
+
+test("installThresholds matches a renamed entry id and degrades without the service", () => {
+  // Each case gets its own load: the thresholds are module state, and "unserved" must
+  // mean "defaults" rather than "whatever the previous case bound".
+  const renamedBundle = loadBundle();
+  const renamed = stubSettingsCtx({ namespaces: ["market/dsh-paste-spill"] });
+  renamedBundle.exports.__internals.installThresholds(renamed.ctx);
+  assert.equal(renamed.page.namespace, "market/dsh-paste-spill", "a market install must still find its form");
+  assert.deepEqual(renamedBundle.exports.__internals.thresholds(), { foldBytes: 7000, spillBytes: 80000 });
+
+  const unservedBundle = loadBundle();
+  const unserved = stubSettingsCtx({ namespaces: ["ui-chat"] });
+  unservedBundle.exports.__internals.installThresholds(unserved.ctx);
+  assert.deepEqual(unservedBundle.exports.__internals.thresholds(), { foldBytes: 4000, spillBytes: 50000 }, "defaults when nobody serves us");
+  assert.deepEqual(unserved.page.registered, [], "no page for a namespace the host does not serve");
+
+  const noService = loadBundle();
+  const bare = { get: () => undefined, effect: (fn) => fn(), slots: { inject: () => {} } };
+  noService.exports.__internals.installThresholds(bare);
+  assert.deepEqual(noService.exports.__internals.thresholds(), { foldBytes: 4000, spillBytes: 50000 });
+  assert.equal(noService.diag().thresholds, "no-service");
+});
+
+test("the settings page shows the live pair and refuses an inverted one", () => {
+  const { bundle, render } = statefulRender("PasteSpillSettings", { t: (key) => key, form: null });
+  const { setThresholds } = bundle.exports.__internals;
+  setThresholds({ foldBytes: 8000, spillBytes: 90000 });
+  let tree = render({ t: (key) => key, form: null });
+  const fold = () => findNode(tree, (node) => node.props !== null && node.props["data-dshps-threshold"] === "fold");
+  const spill = () => findNode(tree, (node) => node.props !== null && node.props["data-dshps-threshold"] === "spill");
+  assert.equal(fold().props.value, "8", "bytes are shown as KB");
+  assert.equal(spill().props.value, "90");
+  assert.equal(fold().type, "input");
+  assert.equal(fold().props.min, 1);
+  assert.equal(fold().props.step, 1);
+
+  // Attachment threshold at or below the fold threshold: refused, not clamped.
+  fold().props.onChange({ target: { value: "95" } });
+  tree = render({ t: (key) => key, form: null });
+  assert.equal(findNode(tree, (node) => node.props !== null && node.props["data-dshps-settings-error"] === "settingsOrderError").type, "p");
+  assert.equal(findNode(tree, (node) => node.props !== null && node.props["data-dshps-settings-save"] === "").props.disabled, true);
+
+  // Back inside the range: the error clears and Save is usable again.
+  spill().props.onChange({ target: { value: "120" } });
+  tree = render({ t: (key) => key, form: null });
+  assert.equal(findNode(tree, (node) => node.props !== null && "data-dshps-settings-error" in node.props), undefined);
+  assert.equal(findNode(tree, (node) => node.props !== null && node.props["data-dshps-settings-save"] === "").props.disabled, false);
+});
+
+test("saving writes both fields in ONE mutation and restoring defaults refills the boxes", () => {
+  const { bundle, render } = statefulRender("PasteSpillSettings", { t: (key) => key, form: null });
+  const { setThresholds } = bundle.exports.__internals;
+  setThresholds({ foldBytes: 4000, spillBytes: 50000 });
+  const calls = [];
+  const form = { mutate: (ops) => { calls.push(ops); return Promise.resolve(true); } };
+  const t = (key) => key;
+  let tree = render({ t, form });
+  const fold = () => findNode(tree, (node) => node.props !== null && node.props["data-dshps-threshold"] === "fold");
+  fold().props.onChange({ target: { value: "6" } });
+  tree = render({ t, form });
+  findNode(tree, (node) => node.props !== null && node.props["data-dshps-settings-save"] === "").props.onClick();
+  assert.deepEqual(calls, [
+    [
+      { op: "set", path: ["foldBytes"], value: 6000 },
+      { op: "set", path: ["spillBytes"], value: 50000 },
+    ],
+  ], "one mutate, so both fields share one revision");
+
+  findNode(tree, (node) => node.props !== null && node.props["data-dshps-settings-reset"] === "").props.onClick();
+  tree = render({ t, form });
+  assert.equal(fold().props.value, "4");
+  assert.equal(findNode(tree, (node) => node.props !== null && node.props["data-dshps-threshold"] === "spill").props.value, "50");
 });

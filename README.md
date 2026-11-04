@@ -12,7 +12,9 @@ Inbound large-paste handling for the DeepSeek Harness composer: a **4–50 KB** 
 | Spill | ≥ 50,000 | The text is uploaded as a real attachment: the message carries a `file` block and the turn tail gets a clickable card that opens the file in the right sidebar. |
 | Transcript | any ≥ 4,000-byte paragraph in a **sent** message | Draws as a collapsible card inside the bubble. Rendering only: the message, the prompt and the clipboard keep the original text. |
 
-The two layers are independent and both measure the **pasted text**, not the draft: the fold layer changes what the composer looks like, the spill layer changes what the model receives. Pastes under 4,000 bytes are left entirely alone.
+The two layers are independent and both measure the **pasted text**, not the draft: the fold layer changes what the composer looks like, the spill layer changes what the model receives. Pastes under the fold threshold are left entirely alone.
+
+Both thresholds are **configurable**: Settings → Plugins → **Paste folding**. Values are stored in the plugin's own config (persisted into the active profile's cordis patch, so they survive restarts and can also be edited by hand), and a change applies to new pastes immediately — no reload, and chips already in the composer are unaffected. The transcript card follows the fold threshold, so a paste behaves the same before and after it is sent. The page refuses an attachment threshold that is not above the fold threshold rather than silently rewriting it.
 
 ## The fold layer (4,000 – 50,000 bytes)
 
@@ -47,7 +49,7 @@ So any paragraph of at least **4,000 UTF-8 bytes** in a user message renders as 
 It is a **display layer only**, built on the conversation package's public user-text pipeline (`ctx.uiConversation.userText.register` + the `conversation.user.text.node` slot — the same machinery stock uses for its `@file` chips):
 
 - the message text is never rewritten, so the model's prompt, the session log, export and the copy button all see the original bytes;
-- the threshold is the fold layer's own `4,000`, so a paste behaves the same before and after it is sent;
+- the threshold is the fold layer's own configured threshold (4,000 by default), so a paste behaves the same before and after it is sent;
 - surfaces that are not the live transcript (queue preview, submission echo, read-only views) pass `interactive: false` and keep their plain text;
 - nothing is stamped into the message to mark it as a paste — a sentinel would leak into the prompt, the log and the clipboard, so detection is content-based;
 - **the prompt stays a prompt**: instruction lines at the edges of the paragraph ("帮我看看这段代码有什么问题" above, "这段报错是什么原因？" below) are peeled out of the card, up to three per edge. The card wraps the data block, the sentence remains normal bubble text.
@@ -109,10 +111,13 @@ package dsh-paste-spill — one loader row, two halves
 
 One package, one row: `cordis.patch.yml` declares `dsh-paste-spill` once, and the loader imports the host half through `exports["."]` while the web-modules scanner discovers the browser half from `dsh.client` plus `exports["./client"]` in the same `package.json`.
 
+The host half also exports a schemastery `Config` with the two thresholds marked `.volatile()`. That is the plugin's only settings surface: the settings domain reads a plugin entry's own schema, so declaring the fields is what puts a form (and this plugin's page) on screen. `volatile` means a write updates the running plugin instead of remounting it — which matters here, because a remount would drop the folds the composer is currently holding.
+
 ## Development
 
 ```sh
-node --test            # 125 tests: host half 17 (helpers 7 + plugin 10), browser half 108
+npm install            # one dev dependency: @deepseek-ai/schemastery, for the Config schema tests
+node --test            # 136 tests: host half 21 (helpers 7 + plugin 10 + config 4), browser half 115
 ```
 
 - The plugin package **is** the repository root, which is what the market's `dsh.bundle` check reads.

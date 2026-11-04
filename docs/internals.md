@@ -282,7 +282,7 @@ rm ~/.dsh/profiles/desktop/node_modules/dsh-paste-spill
 ## 测试
 
 ```bash
-cd dsh-paste-spill && node --test    # 125 个测试：宿主半 17 + 浏览器半 108
+cd dsh-paste-spill && npm install && node --test    # 136 个测试：宿主半 21 + 浏览器半 115
 ```
 
 ## 证据工具（没有 console / CDP 时怎么读真机状态）
@@ -326,15 +326,26 @@ node scripts/read-session.mjs ~/.dsh/sessions/<workspace>/session-<id> --users
 
 `uiConversation` 是 cordis service，但**不**加进 `exports.inject`：老宿主没有 user-text 管线时，缺一个注入服务会让**整个插件** stall（连折叠层一起死）。用 `ctx.get("uiConversation")` 取不到就记一条 `transcriptCard: "no-service"` 诊断然后跳过，插件其余能力照常。
 
-### 阈值
+### 阈值（可配置，2026-11-04）
 
-`PASTE_CARD_BYTES = FOLD_BYTES`（4000）。两个数字必须同源：同一段粘贴在发送前后行为一致，否则用户会看到"输入框里折叠了、发出后又铺开"的矛盾。
+发送后卡片的阈值就是折叠阈值本身（`pasteCardBytes()` 读 `thresholds.foldBytes`），不另设一个数：同一段粘贴在发送前后行为一致，否则用户会看到"输入框里折叠了、发出后又铺开"的矛盾。
+
+两个阈值现在是插件的配置，不是常量：
+
+- **声明在宿主半**（`lib/index.js` 的 `Config`）。理由只有一条：设置域按 **profile entry id** 找表单，schema 来自插件模块自己的 `Config` 导出（`dsh-settings` 的 `schema(entry)` 读 `entry.fiber.runtime.Config`）。浏览器半做判定，但它没有可被设置域读到的 schema。
+- **两个字段都标 `.volatile()`**。这是"写入不 remount"的标记（`dsh-settings` 的 `volatileForm` + `applies: "live"`）。不标的话，保存阈值会重启插件，`foldTextByRef` 里持有的 fold 全部丢失——输入框里的 chip 只剩一个引用节点，没有对应的文本。
+- **浏览器半通过 `ctx.get("configForms")` 读**，不写进 `exports.inject`：没有设置域的宿主上只少一页设置，插件本体照常跑。命名空间用**容错匹配**（`paste-spill` / `*-paste-spill` / `*/paste-spill`），因为 dsh-market 安装时 entry id 可能被改写；判断"有没有被服务"只能靠 `describe()` 的命名空间列表——`configForms.get()` 对不存在的命名空间同样返回一个空 form。
+- **阈值一变就重新注册 userText 规则**。`UserTextDocument.prepare` 用 `this.rules !== rules` 判断要不要重算，规则对象不变、只改它闭包里的变量，已经求值过的消息会一直拿旧答案。所以 `setThresholds` 直接调用 `transcriptRuleRefresh`，dispose 旧规则再注册一个**新对象**；这段数组随之换新，缓存失活，而渲染器的 slot key 不变，视觉上无感。
+- **非法组合的处理分两层**：设置页在保存前拒绝（`spill <= fold` 禁用保存并提示），`normalizeThresholds` 只对手改配置兜底（`spill = fold + 1`）并写 `diag`。两层职责不同，别把 UI 该拦的事交给 clamp。
+
+设置页注册在 `settings.plugins.tab`（设置 → 插件 → 一张卡），由 `configForms` 的镜像订阅驱动；只有命名空间真的被服务时才注册，所以没配设置域的部署看不到任何痕迹。
 
 ## 设计文档与计划
 
 - 设计：`docs/superpowers/specs/2026-09-20-dsh-paste-spill-design.md`
 - 计划：`docs/superpowers/plans/2026-09-20-dsh-paste-spill.md`
 - 对话内卡片：`docs/superpowers/specs/2026-11-04-transcript-paste-card-design.md`、`docs/superpowers/plans/2026-11-04-transcript-paste-card.md`
+- 可配置阈值：`docs/superpowers/specs/2026-11-04-configurable-thresholds-design.md`
 
 ## 已知限制
 
