@@ -3295,3 +3295,173 @@ test("registerFoldSource installs a codec with clipboardText and serialize", () 
     assert.equal(text, "六字真言");
   });
 });
+
+// --- Transcript paste card -------------------------------------------------
+//
+// The fold chip only exists in the composer. After sending, the message is plain text,
+// and stock draws it as one tall pre-wrap bubble. These tests fix the two halves of the
+// fix: a paragraph scanner that decides WHICH range is a paste, and a renderer that
+// draws that range as a card without touching the text the model receives.
+
+test("nextPasteSpan only cards a paragraph at or above the 4 KB threshold", () => {
+  const { nextPasteSpan, PASTE_CARD_BYTES } = loadBundle().exports.__internals;
+  assert.equal(PASTE_CARD_BYTES, 4000, "the transcript threshold follows the fold threshold");
+  assert.equal(nextPasteSpan("x".repeat(3999), 0), undefined, "3999 bytes stays plain text");
+  const span = nextPasteSpan("y".repeat(4000), 0);
+  assert.ok(span, "4000 bytes cards");
+  assert.equal(span.start, 0);
+  assert.equal(span.end, 4000);
+  assert.equal(span.bytes, 4000);
+  assert.equal(span.lines, 1);
+});
+
+test("nextPasteSpan keeps the paragraphs around the long one as text", () => {
+  const { nextPasteSpan } = loadBundle().exports.__internals;
+  const body = "z".repeat(4001);
+  const text = `看看这段日志\n\n${body}\n\n再问一句`;
+  const span = nextPasteSpan(text, 0);
+  assert.equal(span.start, text.indexOf("z"), "the instruction line stays outside the card");
+  assert.equal(span.end, text.indexOf("z") + 4001);
+  // A cursor that begins inside the long paragraph must not yield a HALF card: that
+  // would swallow the tail of whatever node ended there.
+  assert.equal(nextPasteSpan(text, span.start + 10), undefined);
+  // But the next paragraph is still offered once the cursor has moved past it.
+  const after = `${body}\n\n${"q".repeat(4000)}`;
+  assert.equal(nextPasteSpan(after, 4002).start, after.indexOf("q"));
+});
+
+test("nextPasteSpan trims the paragraph's own edge whitespace", () => {
+  const { nextPasteSpan } = loadBundle().exports.__internals;
+  const body = "k".repeat(4000);
+  const text = `  ${body}   `;
+  const span = nextPasteSpan(text, 0);
+  assert.equal(span.start, 2, "leading indentation stays outside the card");
+  assert.equal(span.end, 2 + 4000, "trailing spaces stay outside too");
+  assert.equal(span.bytes, 4000);
+});
+
+test("nextPasteSpan handles CRLF separators and counts UTF-8 bytes, not characters", () => {
+  const { nextPasteSpan } = loadBundle().exports.__internals;
+  const crlf = `前文\r\n\r\n${"l".repeat(4000)}`;
+  assert.equal(nextPasteSpan(crlf, 0).bytes, 4000);
+  // 1400 ideographs are 4200 UTF-8 bytes even though they are 1400 characters; 1333
+  // are 3999 bytes. A character-count threshold would get both of these backwards.
+  assert.ok(nextPasteSpan("中".repeat(1400), 0), "4200 bytes cards");
+  assert.equal(nextPasteSpan("中".repeat(1333), 0), undefined, "3999 bytes does not");
+});
+
+test("the paste rule yields a candidate the user-text document accepts", () => {
+  const { pasteTextRule } = loadBundle().exports.__internals;
+  assert.equal(pasteTextRule.id, "paste", "the candidate id must equal the rule id");
+  assert.equal(pasteTextRule.match("short", 0), undefined);
+  const node = pasteTextRule.match("w".repeat(4200), 0);
+  assert.equal(node.id, "paste");
+  assert.equal(node.start, 0);
+  assert.equal(node.end, 4200);
+  assert.deepEqual(node.data, { bytes: 4200, lines: 1 });
+});
+
+test("PasteCard renders plain text on non-interactive surfaces", () => {
+  const { PasteCard } = loadBundle().exports.__internals;
+  const raw = "p".repeat(4000);
+  const tree = PasteCard({
+    node: { data: { bytes: 4000, lines: 1 } },
+    raw,
+    interactive: false,
+    t: (key) => key,
+  });
+  assert.equal(tree.props.className, "dshps-card-plain", "queue previews and echoes keep their look");
+  assert.equal(tree.children[0], raw, "and the exact original text");
+});
+
+test("PasteCard is collapsed by default and expanded from its own state", () => {
+  const collapsed = loadBundle().exports.__internals.PasteCard;
+  const raw = `{\n${"a".repeat(4100)}\n}`;
+  const node = { data: { bytes: 4107, lines: 3 } };
+  const t = (key, params) => (params === undefined ? key : `${key}:${params.size}:${params.lines}`);
+  const tree = collapsed({ node, raw, interactive: true, t });
+  assert.equal(tree.props.className, "dshps-card");
+  assert.equal(findDeep(tree, "data-paste-card-full"), null, "a collapsed card has no full body");
+  assert.ok(findDeep(tree, "data-paste-card-preview"), "it shows the first lines instead");
+  assert.equal(findDeep(tree, "data-paste-card-toggle").props["aria-expanded"], "false");
+
+  const expanded = loadBundle({ useState: () => [true, () => {}] }).exports.__internals.PasteCard({
+    node,
+    raw,
+    interactive: true,
+    t,
+  });
+  const body = findDeep(expanded, "data-paste-card-full");
+  assert.ok(body, "an expanded card renders the full text");
+  assert.equal(body.children[0], raw, "and it is the original text, unchanged");
+  assert.equal(findDeep(expanded, "data-paste-card-preview"), null);
+});
+
+test("PasteCard reports a failed copy instead of pretending it worked", () => {
+  let hooks = 0;
+  const captured = [];
+  const { PasteCard } = loadBundle({
+    useState: () => {
+      hooks += 1;
+      return hooks === 1 ? [false, () => {}] : [undefined, (value) => captured.push(value)];
+    },
+  }).exports.__internals;
+  const tree = PasteCard({
+    node: { data: { bytes: 4100, lines: 1 } },
+    raw: "c".repeat(4100),
+    interactive: true,
+    t: (key) => key,
+  });
+  findDeep(tree, "data-paste-card-copy").props.onClick();
+  assert.deepEqual(captured, ["failed"], "no clipboard in this runtime means a visible failure");
+});
+
+test("installTranscriptCard registers the rule and renderer, and no-ops without the service", () => {
+  const { installTranscriptCard } = loadBundle().exports.__internals;
+  const rules = [];
+  const registered = [];
+  const ctx = {
+    get: (name) =>
+      name === "uiConversation"
+        ? { userText: { register: (rule) => { rules.push(rule); return () => {}; } } }
+        : undefined,
+    effect: (fn) => fn(),
+    slots: {
+      inject: (_name, body) => {
+        const iterator = body();
+        while (!iterator.next().done);
+      },
+      register: (definition) => { registered.push(definition); return () => {}; },
+    },
+  };
+  installTranscriptCard(ctx);
+  assert.equal(rules.length, 1, "one rule");
+  assert.equal(rules[0].id, "paste");
+  assert.equal(registered.length, 1, "one renderer");
+  assert.equal(registered[0].key, "paste");
+  assert.equal(registered[0].name, "conversation.user.text.node");
+
+  const injected = [];
+  installTranscriptCard({
+    get: () => undefined,
+    effect: () => {},
+    slots: { inject: () => injected.push(true), register: () => {} },
+  });
+  assert.deepEqual(injected, [], "a host without uiConversation gets no renderer at all");
+});
+
+test("a colon-ended instruction line stays outside the card", () => {
+  const { nextPasteSpan } = loadBundle().exports.__internals;
+  // The dominant real shape: instruction and paste joined by ONE newline, so a
+  // blank-line split would fold the instruction into a monospace card.
+  const header = "看一下这段日志：";
+  const body = "{\n" + "  a: 1,\n".repeat(600) + "}";
+  const text = `${header}\n${body}`;
+  const span = nextPasteSpan(text, 0);
+  assert.ok(span, "the paste still cards");
+  assert.equal(span.start, header.length + 1, "the card starts at the paste, not the instruction");
+  assert.equal(text.slice(span.start, span.end), body);
+  // A data line that merely CONTAINS a colon is not an instruction.
+  const data = `{\n  "note": "x",\n${"  k: 1,\n".repeat(700)}}`;
+  assert.equal(nextPasteSpan(data, 0).start, 0, "a JSON head keeps the whole paste in the card");
+});

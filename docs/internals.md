@@ -282,7 +282,7 @@ rm ~/.dsh/profiles/desktop/node_modules/dsh-paste-spill
 ## 测试
 
 ```bash
-cd dsh-paste-spill && node --test    # 108 个测试：宿主半 17 + 浏览器半 91
+cd dsh-paste-spill && node --test    # 118 个测试：宿主半 17 + 浏览器半 101
 ```
 
 ## 证据工具（没有 console / CDP 时怎么读真机状态）
@@ -298,10 +298,37 @@ node scripts/read-session.mjs ~/.dsh/sessions/<workspace>/session-<id> --users
 诊断在 `localStorage["dsh.paste-spill.diag"]`：顶层是最后一次的汇总，`bySession.<sessionId>` 是**按会话**的
 状态。确认插件真的加载了新一版：`build` 必须等于当前 `BUILD_REV`、`applyRanAt` 是刚刚的时间。
 
+## 发送后的对话内卡片（2026-11-04）
+
+### 为什么不用 sentinel 标记
+
+最省事的判定是让 chip 在提交时把原文包进一个标记（`<!--dshsp:…-->` 或类似），渲染时匹配标记。**否决**，因为那会把展示层的需要写进传输层：标记会进 prompt、进 session log、进导出和复制结果；要消掉它就得在宿主半改写消息文本，那是"改变会话内容"，代价远高于收益。所以判定只能来自文本自身——代价是规则分不清"粘贴"与"自己打的 ≥4 KB"，长散文也会被折叠（展开只差一次点击）。
+
+### 为什么走 userText 管线
+
+`@deepseek-ai/dsh-client-ui-conversation` 的已发送用户文本走一条公开管线：`ctx.uiConversation.userText.register(rule)`（同步规则，返回 `{id,start,end,data}`）+ keyed 槽位 `conversation.user.text.node`（拿到 `{node, raw, interactive}`）。stock 自己的 `@文件引用` chip 就是这么把 `@a.ts` 换成 chip 的，所以这不是私有钩子。求值器会把未被规则覆盖的区间自动变成 `text` 节点，因此"只折长段、其余照旧"不需要自己拼文档。
+
+段落按空行切分，但真实消息里指令往往只用**一个换行**接粘贴（`看一下这段日志：\n{…}`）。所以"首行很短且以冒号结尾"时把这一行剥在卡外：数据行不会以裸冒号收尾，误伤面很小，而指令行留在气泡里保持正文字体，比折进等宽卡片更符合语义。
+
+规则 `order: 20` 排在 stock 的 `@` 规则（30）与空白规则（1e3+）之前：长段里的 `@路径` 会留在卡片内，不再单独出 chip——这是有意的取舍。
+
+### 为什么 gate 在 `interactive`
+
+同一个 `conversation.user.text` Factory 也被三处非对话场景复用：队列预览（`ellipsis: true`）、提交回显气泡、只读/子会话视图。给节点的 props 里只有 `interactive` 能区分它们（`ellipsis` 传给了 Factory，没传给节点）。所以 `interactive !== true` 时组件直接输出 `raw` 纯文本：队列那一行不会被一个块级卡片撑坏，回显与只读视图也保持原样。
+
+### 为什么 `ctx.get` 而不是 `exports.inject`
+
+`uiConversation` 是 cordis service，但**不**加进 `exports.inject`：老宿主没有 user-text 管线时，缺一个注入服务会让**整个插件** stall（连折叠层一起死）。用 `ctx.get("uiConversation")` 取不到就记一条 `transcriptCard: "no-service"` 诊断然后跳过，插件其余能力照常。
+
+### 阈值
+
+`PASTE_CARD_BYTES = FOLD_BYTES`（4000）。两个数字必须同源：同一段粘贴在发送前后行为一致，否则用户会看到"输入框里折叠了、发出后又铺开"的矛盾。
+
 ## 设计文档与计划
 
 - 设计：`docs/superpowers/specs/2026-09-20-dsh-paste-spill-design.md`
 - 计划：`docs/superpowers/plans/2026-09-20-dsh-paste-spill.md`
+- 对话内卡片：`docs/superpowers/specs/2026-11-04-transcript-paste-card-design.md`、`docs/superpowers/plans/2026-11-04-transcript-paste-card.md`
 
 ## 已知限制
 

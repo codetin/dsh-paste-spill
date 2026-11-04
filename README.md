@@ -10,6 +10,7 @@ Inbound large-paste handling for the DeepSeek Harness composer: a **4–50 KB** 
 |---|---|---|
 | Fold | 4,000 – 50,000 | That pasted run leaves the editor and becomes one chip. One chip per paste — several coexist, and earlier chips are never overwritten. |
 | Spill | ≥ 50,000 | The text is uploaded as a real attachment: the message carries a `file` block and the turn tail gets a clickable card that opens the file in the right sidebar. |
+| Transcript | any ≥ 4,000-byte paragraph in a **sent** message | Draws as a collapsible card inside the bubble. Rendering only: the message, the prompt and the clipboard keep the original text. |
 
 The two layers are independent and both measure the **pasted text**, not the draft: the fold layer changes what the composer looks like, the spill layer changes what the model receives. Pastes under 4,000 bytes are left entirely alone.
 
@@ -34,6 +35,21 @@ The floating chip band measures itself and publishes its height as `--dshps-chip
 A paste of 50,000 bytes or more is turned into a `File` and sent through the composer's existing attachment upload path, with a content-sniffed name (`pasted-text-<n>.json` / `.md` / `.py` / `.js` / `.html` / `.csv` / `.txt`). The result is a legal `file` block in the message, so the model receives a read-only host path through the stock attachment handling — no session format change and no model-side change.
 
 The host half watches `agent/inbox/inserted` for those paste files, resolves each one's host path from the attachment store, and publishes a `deliverables/presented` event on `agent/pre-step`, which the stock deliverables UI renders as a clickable card in the turn tail. Clicking the card opens the file in the right sidebar. The original text is then excised from the composer **in place** — the pasted run's own span is overwritten with `""`, never the whole draft, so other chips, typed text, the caret and undo history all survive.
+
+## After sending (the transcript card)
+
+The fold chip lives in the composer. Once the message is sent, the session holds plain text and stock draws it as one tall `pre-wrap` bubble — DSH has no long-message collapse of its own.
+
+So any paragraph of at least **4,000 UTF-8 bytes** in a user message renders as a collapsible card: `Pasted text · 5.9 KB · 128 lines`, the first two lines as a preview, and `Show` / `Hide` / `Copy`. Expanding shows the full text in a scrolling `pre` capped at 320 px.
+
+It is a **display layer only**, built on the conversation package's public user-text pipeline (`ctx.uiConversation.userText.register` + the `conversation.user.text.node` slot — the same machinery stock uses for its `@file` chips):
+
+- the message text is never rewritten, so the model's prompt, the session log, export and the copy button all see the original bytes;
+- the threshold is the fold layer's own `4,000`, so a paste behaves the same before and after it is sent;
+- surfaces that are not the live transcript (queue preview, submission echo, read-only views) pass `interactive: false` and keep their plain text;
+- nothing is stamped into the message to mark it as a paste — a sentinel would leak into the prompt, the log and the clipboard, so detection is content-based.
+
+That last point is the known trade-off: the rule cannot tell a paste from 4 KB someone typed, so a long paragraph of prose collapses as well. Expanding is always one click away.
 
 ## Screenshots
 
@@ -93,7 +109,7 @@ One package, one row: `cordis.patch.yml` declares `dsh-paste-spill` once, and th
 ## Development
 
 ```sh
-node --test            # 108 tests: host half 17 (helpers 7 + plugin 10), browser half 91
+node --test            # 118 tests: host half 17 (helpers 7 + plugin 10), browser half 101
 ```
 
 - The plugin package **is** the repository root, which is what the market's `dsh.bundle` check reads.
