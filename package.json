@@ -1,6 +1,6 @@
 {
   "name": "dsh-paste-spill",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Inbound large-paste handling for the DeepSeek Harness composer: each 4–50 KB paste folds into one chip you can expand or delete on its own, and a ≥50 KB paste becomes a real file attachment with a deliverable card. · DSH 入站大文本粘贴处理：每次 4–50 KB 粘贴折叠成一枚可单独展开/删除的 chip，≥50 KB 转成真附件并出交付卡。",
   "license": "MIT",
   "author": "winditer",
