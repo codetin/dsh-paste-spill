@@ -706,7 +706,10 @@ test("a large paste folds into a chip, and the text stops being in the editor", 
   assert.equal(projection.occurrences.length, 1, "the editor holds one chip node");
   assert.equal(projection.occurrences[0].source, "folded-text");
   assert.equal(projection.occurrences[0].ref, record.folds[0].ref, "and it is this fold's node");
-  assert.equal(projection.detectText, "\uFFFC ", "just the chip footprint");
+  // Chip + NEWLINE, not chip + space: a folded paste is a block, so the caret is already
+  // on the next line (that is where the prompt goes) and the draft already carries the
+  // break the transcript card needs to keep the prompt out of the monospace card.
+  assert.equal(projection.detectText, "\uFFFC\n", "just the chip footprint, then a line break");
   assert.ok(!projection.clipboardText.includes(body), "the raw paste is out of the draft");
   assert.equal(await triggers.serializeReference("folded-text", record.folds[0].ref), body,
     "and the reference serializes back to the original paste at submit time");
@@ -1001,11 +1004,13 @@ test("a SECOND large paste adds a second chip instead of leaving the text inline
 
   const projection = composer.projection();
   assert.equal(projection.occurrences.length, 2, "the editor holds two chip nodes");
-  assert.equal(projection.detectText, "\uFFFC \uFFFC ", "one footprint per chip, one space between");
+  assert.equal(projection.detectText, "\uFFFC\n\uFFFC\n", "one footprint per chip, each on its own line");
   assert.ok(!projection.clipboardText.includes(first), "the first paste stays folded");
   assert.ok(!projection.clipboardText.includes(second), "and the second does too -- no raw text in the box");
   // Typed text around the chips is still ordinary text, in the right order.
-  assert.equal(await composer.submittedText(triggers), `${first} ${second}`, "and a send posts both pastes, in order");
+  // `submittedText` trims, so the block's trailing break does not survive the send.
+  assert.equal(await composer.submittedText(triggers), `${first}\n${second}`,
+    "and a send posts both pastes, in order, on their own lines");
 });
 
 test("the SAME text pasted twice makes two chips, not one chip plus inline text", async () => {
@@ -1027,8 +1032,8 @@ test("the SAME text pasted twice makes two chips, not one chip plus inline text"
   assert.equal(record.folds.length, 2, "two chips for two pastes, even with identical content");
   assert.equal(new Set(record.folds.map((fold) => fold.ref)).size, 2, "each with its own ref");
   assert.equal(composer.projection().occurrences.length, 2, "two chip nodes in the editor");
-  assert.equal(composer.projection().detectText, "\uFFFC \uFFFC ", "and no raw text left inline");
-  assert.equal(await composer.submittedText(triggers), `${same} ${same}`, "a send posts both copies");
+  assert.equal(composer.projection().detectText, "\uFFFC\n\uFFFC\n", "and no raw text left inline");
+  assert.equal(await composer.submittedText(triggers), `${same}\n${same}`, "a send posts both copies");
 });
 
 test("typing around a chip keeps the fold, and what the user types is what they see", async () => {
@@ -2978,11 +2983,11 @@ test("expanding ONE of two chips returns only that paste", async () => {
   const [one, two] = face.hooks.pasteFold.getSnapshot()["s1"].folds;
   face.onToggle("s1", true, two.ref);
 
-  assert.equal(composer.detect(), `\uFFFC ${second}`, "the expanded paste is back in place, beside the other chip");
+  assert.equal(composer.detect(), `\uFFFC\n${second}`, "the expanded paste is back in place, below the other chip");
   assert.equal(composer.projection().occurrences.length, 1, "the other chip is still there");
   assert.equal(composer.projection().occurrences[0].ref, one.ref, "and it is the one that was not expanded");
   assert.equal(face.hooks.pasteFold.getSnapshot()["s1"].folds.length, 1, "only the expanded fold is retired");
-  assert.equal(await composer.submittedText(triggers), `${first} ${second}`, "a send still posts both pastes");
+  assert.equal(await composer.submittedText(triggers), `${first}\n${second}`, "a send still posts both pastes");
 });
 
 
@@ -3150,7 +3155,7 @@ test("× on one chip removes that paste and leaves the other alone", async () =>
   const [one, two] = face.hooks.pasteFold.getSnapshot()["s1"].folds;
   face.onDismiss("s1", one.ref);
 
-  assert.equal(composer.detect(), `\uFFFC `, "the dismissed chip node is gone");
+  assert.equal(composer.detect(), `\uFFFC\n`, "the dismissed chip node is gone");
   assert.equal(composer.projection().occurrences[0].ref, two.ref, "and only the other one is left");
   assert.equal(face.hooks.pasteFold.getSnapshot()["s1"].folds.length, 1, "its fold is retired");
   assert.equal(await composer.submittedText(triggers), second, "a send then posts the surviving paste only");
@@ -3211,7 +3216,9 @@ test("a paste with surrounding text folds only the pasted run", async () => {
   const entry = face.hooks.pasteFold.getSnapshot()["s1"].folds[0];
   assert.equal(entry.text, body, "the entry holds the pasted run alone");
   assert.notEqual(entry.text, composer.draft(), "and never the whole draft");
-  assert.equal(composer.detect(), `${surrounding}\uFFFC `, "the surrounding text is untouched");
+  // The chip is a block: the text before it stays where the user typed it, and the
+  // paste starts on its own line instead of running on from "keep this. ".
+  assert.equal(composer.detect(), `${surrounding}\n\uFFFC\n`, "the surrounding text is untouched");
   assert.ok(composer.draft().startsWith(surrounding), "and still first in the composer");
 });
 
@@ -3502,4 +3509,63 @@ test("a card needs 4 KB of DATA left after peeling, not 4 KB of instruction", ()
   const body = `x;\n${"  y = 1;\n".repeat(380)}`; // ~3.9 KB of data
   assert.equal(nextPasteSpan(`${instructions}\n${body}`, 0), undefined,
     "instructions + a short data tail stays plain text");
+});
+
+// --- The chip brings its own line break ----------------------------------
+//
+// Requested in-app: "粘贴 + 换行 + 这段报错是什么原因？" needed a MANUAL Enter, because stock
+// puts a single space after a reference chip. The chip is a block, so the break is now
+// part of the insertion: the caret is already on the next line, and the message already
+// carries the newline that keeps the prompt out of the transcript card.
+
+test("a paste needs no Enter: the caret lands on the next line, and the prompt stays out of the card", async () => {
+  const composer = createFakeComposer("");
+  const { triggers } = setUpComposerFold(composer);
+  const body = `{\n${'  "k": 1,\n'.repeat(500)}}`;
+  composer.insert(body);
+  await settleChip();
+
+  const detect = composer.projection().detectText;
+  assert.equal(detect, "\uFFFC\n", "the chip is followed by a line break, not a space");
+  assert.equal(composer.projection().selection.end, detect.length, "and the caret is on that new line");
+
+  const question = "这段报错是什么原因？";
+  composer.insert(question);
+  const sent = await composer.submittedText(triggers);
+  assert.equal(sent, `${body}\n${question}`, "typing after the paste starts a new line, with no Enter pressed");
+
+  // The reason the break matters downstream: the transcript rule can now split the
+  // message into a data card plus the user's own sentence.
+  const { pasteTextRule } = loadBundle().exports.__internals;
+  const node = pasteTextRule.match(sent, 0);
+  assert.ok(node, "the paste still cards");
+  assert.equal(sent.slice(node.start, node.end), body, "the card wraps the paste alone");
+  assert.equal(sent.slice(node.end), `\n${question}`, "and the question is ordinary text below it");
+});
+
+test("expanding a fold keeps the break, so a prompt typed below is not merged into the paste", async () => {
+  const composer = createFakeComposer("");
+  const { face } = setUpComposerFold(composer);
+  const body = "z".repeat(6000);
+  composer.insert(body);
+  await settleChip();
+  composer.insert("为什么这里会报错？");
+
+  face.onToggle("s1", true, face.hooks.pasteFold.getSnapshot()["s1"].folds[0].ref);
+  assert.equal(composer.draft(), `${body}\n为什么这里会报错？`,
+    "the restored paste and the user's question stay on separate lines");
+});
+
+test("a chip inserted after typed text opens a line of its own", async () => {
+  const composer = createFakeComposer("");
+  setUpComposerFold(composer);
+  const body = "q".repeat(6000);
+  composer.insert("keep this.\n");
+  await settleChip();
+  composer.insert(body);
+  await settleChip();
+  // The user already ended the line, so no extra blank line is inserted -- the chip
+  // simply lands at the start of the next one.
+  assert.equal(composer.projection().detectText, "keep this.\n\uFFFC\n",
+    "the typed line is untouched and the chip sits on the next line");
 });

@@ -28,6 +28,8 @@ The chip is a real editor node rather than a decoration, and it registers an `in
 
 Because one paste equals one chip, pasting a second 6 KB block **appends** a chip instead of replacing the first one: a chip is the only carrier of its text, so overwriting one would silently delete that paste.
 
+**The chip brings its own line break.** Stock appends a single space after a reference chip, which left the caret on the chip's own line — you had to press Enter before writing the question. The insert now puts the caret on the next line, and that newline travels with the message (`{…}` then `why does this throw?`), which is exactly what keeps the question out of the transcript card: the paste is a block, not a run-on after your sentence.
+
 The floating chip band measures itself and publishes its height as `--dshps-chip-band` on the composer card, which the card turns into `padding-top`. The chips sit above the first line of input instead of covering it, and reflow when several chips wrap onto a second line.
 
 ## The spill layer (≥ 50,000 bytes)
@@ -110,7 +112,7 @@ One package, one row: `cordis.patch.yml` declares `dsh-paste-spill` once, and th
 ## Development
 
 ```sh
-node --test            # 122 tests: host half 17 (helpers 7 + plugin 10), browser half 105
+node --test            # 125 tests: host half 17 (helpers 7 + plugin 10), browser half 108
 ```
 
 - The plugin package **is** the repository root, which is what the market's `dsh.bundle` check reads.

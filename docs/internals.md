@@ -282,7 +282,7 @@ rm ~/.dsh/profiles/desktop/node_modules/dsh-paste-spill
 ## 测试
 
 ```bash
-cd dsh-paste-spill && node --test    # 122 个测试：宿主半 17 + 浏览器半 105
+cd dsh-paste-spill && node --test    # 125 个测试：宿主半 17 + 浏览器半 108
 ```
 
 ## 证据工具（没有 console / CDP 时怎么读真机状态）
@@ -309,6 +309,10 @@ node scripts/read-session.mjs ~/.dsh/sessions/<workspace>/session-<id> --users
 `@deepseek-ai/dsh-client-ui-conversation` 的已发送用户文本走一条公开管线：`ctx.uiConversation.userText.register(rule)`（同步规则，返回 `{id,start,end,data}`）+ keyed 槽位 `conversation.user.text.node`（拿到 `{node, raw, interactive}`）。stock 自己的 `@文件引用` chip 就是这么把 `@a.ts` 换成 chip 的，所以这不是私有钩子。求值器会把未被规则覆盖的区间自动变成 `text` 节点，因此"只折长段、其余照旧"不需要自己拼文档。
 
 段落按空行切分，但真实消息里指令往往只用**一个换行**接粘贴（`帮我看看这段代码有什么问题\n{…}`）。所以卡片会做**边缘剥行**：段落首尾的"非数据行"（短、无代码/日志记号、无缩进、无时间戳）被剥在卡外，留作气泡正文；每边最多剥 `PASTE_CARD_MAX_PEEL_LINES = 3` 行，剥完数据块仍要 ≥ 4 KB 才出卡——否则说明这段主要是指令，整段保持原文。
+
+**chip 自带换行（2026-11-04）**：stock 的 `insertReference` 在 chip 后补**一个空格**，光标就停在 chip 那一行——用户必须先按 Enter 才能把 prompt 写到下一行，消息里也因此是"粘贴 + 空格 + 问题"，对话卡片无从切开。现在插入成功后立刻把那个空格换成 `\n`（`breakLineAroundChip`），并在 chip 紧挨文字时于其前面也补一个 `\n`（粘贴是一个块）。两处都只是按 detect 坐标做普通文本拼接，undo、其它 chip、光标行为与用户自己按 Enter 一致。
+
+因此删除路径要区分"空格分隔符"和"换行分隔符"（`consumeSeparatorEnd`）：展开用 `tail-empty`——只有换行后面什么都没有时才吃掉它，否则会把用户写在下一行的 prompt 并到粘贴最后一行；删除/回滚用 `always`——chip 那一行整行消失，不留空行。
 
 判定是"正面证据才算数据"：行长 >100、含 `{}[]<>;=`、`=>`/`->`、缩进 ≥2、`#`/`//`/`/*`/diff 记号、以 `[(`/引号/数字/时间戳开头 → 数据行。猜错的代价只有一行等宽文字，不会丢内容（被剥的行照样渲染，只是留在卡外）。
 
