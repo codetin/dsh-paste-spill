@@ -3465,3 +3465,41 @@ test("a colon-ended instruction line stays outside the card", () => {
   const data = `{\n  "note": "x",\n${"  k: 1,\n".repeat(700)}}`;
   assert.equal(nextPasteSpan(data, 0).start, 0, "a JSON head keeps the whole paste in the card");
 });
+
+test("an instruction line without a colon is still peeled off the card", () => {
+  const { nextPasteSpan } = loadBundle().exports.__internals;
+  // The bug this fixes: a plain question ("帮我看看这段代码有什么问题", no colon) used to
+  // be swallowed into the monospace card, so the user's prompt looked like it vanished.
+  const header = "帮我看看这段代码有什么问题";
+  const body = `{\n${'  "k": 1,\n'.repeat(500)}}`;
+  const span = nextPasteSpan(`${header}\n${body}`, 0);
+  assert.equal(span.start, header.length + 1, "the prompt stays ordinary text");
+  assert.equal(`${header}\n${body}`.slice(span.start, span.end), body);
+});
+
+test("a trailing question is peeled off the card too", () => {
+  const { nextPasteSpan } = loadBundle().exports.__internals;
+  const body = `{\n${'  "k": 1,\n'.repeat(500)}}`;
+  const footer = "这段报错是什么原因？";
+  const text = `${body}\n${footer}`;
+  const span = nextPasteSpan(text, 0);
+  assert.equal(span.start, 0);
+  assert.equal(text.slice(span.start, span.end), body, "the question stays below as text");
+});
+
+test("peeling is capped so a prose document is not shredded line by line", () => {
+  const { nextPasteSpan } = loadBundle().exports.__internals;
+  const prose = ["说明一", "说明二", "说明三", "说明四", "说明五"];
+  const body = `function f() {\n${'  return 1;\n'.repeat(500)}}`;
+  const text = `${prose.join("\n")}\n${body}`;
+  const span = nextPasteSpan(text, 0);
+  assert.ok(text.slice(span.start).startsWith("说明四"), "only the first three lines are peeled");
+});
+
+test("a card needs 4 KB of DATA left after peeling, not 4 KB of instruction", () => {
+  const { nextPasteSpan } = loadBundle().exports.__internals;
+  const instructions = "请帮我看看下面这段代码，它跑不起来，我怀疑是循环写错了，麻烦你定位一下问题所在";
+  const body = `x;\n${"  y = 1;\n".repeat(380)}`; // ~3.9 KB of data
+  assert.equal(nextPasteSpan(`${instructions}\n${body}`, 0), undefined,
+    "instructions + a short data tail stays plain text");
+});

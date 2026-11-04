@@ -282,7 +282,7 @@ rm ~/.dsh/profiles/desktop/node_modules/dsh-paste-spill
 ## 测试
 
 ```bash
-cd dsh-paste-spill && node --test    # 118 个测试：宿主半 17 + 浏览器半 101
+cd dsh-paste-spill && node --test    # 122 个测试：宿主半 17 + 浏览器半 105
 ```
 
 ## 证据工具（没有 console / CDP 时怎么读真机状态）
@@ -308,7 +308,9 @@ node scripts/read-session.mjs ~/.dsh/sessions/<workspace>/session-<id> --users
 
 `@deepseek-ai/dsh-client-ui-conversation` 的已发送用户文本走一条公开管线：`ctx.uiConversation.userText.register(rule)`（同步规则，返回 `{id,start,end,data}`）+ keyed 槽位 `conversation.user.text.node`（拿到 `{node, raw, interactive}`）。stock 自己的 `@文件引用` chip 就是这么把 `@a.ts` 换成 chip 的，所以这不是私有钩子。求值器会把未被规则覆盖的区间自动变成 `text` 节点，因此"只折长段、其余照旧"不需要自己拼文档。
 
-段落按空行切分，但真实消息里指令往往只用**一个换行**接粘贴（`看一下这段日志：\n{…}`）。所以"首行很短且以冒号结尾"时把这一行剥在卡外：数据行不会以裸冒号收尾，误伤面很小，而指令行留在气泡里保持正文字体，比折进等宽卡片更符合语义。
+段落按空行切分，但真实消息里指令往往只用**一个换行**接粘贴（`帮我看看这段代码有什么问题\n{…}`）。所以卡片会做**边缘剥行**：段落首尾的"非数据行"（短、无代码/日志记号、无缩进、无时间戳）被剥在卡外，留作气泡正文；每边最多剥 `PASTE_CARD_MAX_PEEL_LINES = 3` 行，剥完数据块仍要 ≥ 4 KB 才出卡——否则说明这段主要是指令，整段保持原文。
+
+判定是"正面证据才算数据"：行长 >100、含 `{}[]<>;=`、`=>`/`->`、缩进 ≥2、`#`/`//`/`/*`/diff 记号、以 `[(`/引号/数字/时间戳开头 → 数据行。猜错的代价只有一行等宽文字，不会丢内容（被剥的行照样渲染，只是留在卡外）。
 
 规则 `order: 20` 排在 stock 的 `@` 规则（30）与空白规则（1e3+）之前：长段里的 `@路径` 会留在卡片内，不再单独出 chip——这是有意的取舍。
 

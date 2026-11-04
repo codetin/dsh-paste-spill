@@ -47,9 +47,10 @@ It is a **display layer only**, built on the conversation package's public user-
 - the message text is never rewritten, so the model's prompt, the session log, export and the copy button all see the original bytes;
 - the threshold is the fold layer's own `4,000`, so a paste behaves the same before and after it is sent;
 - surfaces that are not the live transcript (queue preview, submission echo, read-only views) pass `interactive: false` and keep their plain text;
-- nothing is stamped into the message to mark it as a paste — a sentinel would leak into the prompt, the log and the clipboard, so detection is content-based.
+- nothing is stamped into the message to mark it as a paste — a sentinel would leak into the prompt, the log and the clipboard, so detection is content-based;
+- **the prompt stays a prompt**: instruction lines at the edges of the paragraph ("帮我看看这段代码有什么问题" above, "这段报错是什么原因？" below) are peeled out of the card, up to three per edge. The card wraps the data block, the sentence remains normal bubble text.
 
-That last point is the known trade-off: the rule cannot tell a paste from 4 KB someone typed, so a long paragraph of prose collapses as well. Expanding is always one click away.
+Peeling can only recognise data positively (long lines, indentation, code/log punctuation, brackets, timestamps), so a pasted 4 KB *document of prose* still collapses — minus a few edge lines. Expanding is always one click away.
 
 ## Screenshots
 
@@ -109,7 +110,7 @@ One package, one row: `cordis.patch.yml` declares `dsh-paste-spill` once, and th
 ## Development
 
 ```sh
-node --test            # 118 tests: host half 17 (helpers 7 + plugin 10), browser half 101
+node --test            # 122 tests: host half 17 (helpers 7 + plugin 10), browser half 105
 ```
 
 - The plugin package **is** the repository root, which is what the market's `dsh.bundle` check reads.
