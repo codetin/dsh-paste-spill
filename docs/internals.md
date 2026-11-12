@@ -333,10 +333,20 @@ node scripts/read-session.mjs ~/.dsh/sessions/<workspace>/session-<id> --users
 两个阈值现在是插件的配置，不是常量：
 
 - **声明在宿主半**（`lib/index.js` 的 `Config`）。理由只有一条：设置域按 **profile entry id** 找表单，schema 来自插件模块自己的 `Config` 导出（`dsh-settings` 的 `schema(entry)` 读 `entry.fiber.runtime.Config`）。浏览器半做判定，但它没有可被设置域读到的 schema。
-- **两个字段都标 `.volatile()`**。这是"写入不 remount"的标记（`dsh-settings` 的 `volatileForm` + `applies: "live"`）。不标的话，保存阈值会重启插件，`foldTextByRef` 里持有的 fold 全部丢失——输入框里的 chip 只剩一个引用节点，没有对应的文本。
+- **三个字段都标 `.volatile()`**（`foldBytes` / `spillBytes` / `alwaysText`）。这是"写入不 remount"的标记（`dsh-settings` 的 `volatileForm` + `applies: "live"`）。不标的话，保存阈值会重启插件，`foldTextByRef` 里持有的 fold 全部丢失——输入框里的 chip 只剩一个引用节点，没有对应的文本。
 - **浏览器半通过 `ctx.get("configForms")` 读**，不写进 `exports.inject`：没有设置域的宿主上只少一页设置，插件本体照常跑。命名空间用**容错匹配**（`paste-spill` / `*-paste-spill` / `*/paste-spill`），因为 dsh-market 安装时 entry id 可能被改写；判断"有没有被服务"只能靠 `describe()` 的命名空间列表——`configForms.get()` 对不存在的命名空间同样返回一个空 form。
 - **阈值一变就重新注册 userText 规则**。`UserTextDocument.prepare` 用 `this.rules !== rules` 判断要不要重算，规则对象不变、只改它闭包里的变量，已经求值过的消息会一直拿旧答案。所以 `setThresholds` 直接调用 `transcriptRuleRefresh`，dispose 旧规则再注册一个**新对象**；这段数组随之换新，缓存失活，而渲染器的 slot key 不变，视觉上无感。
 - **非法组合的处理分两层**：设置页在保存前拒绝（`spill <= fold` 禁用保存并提示），`normalizeThresholds` 只对手改配置兜底（`spill = fold + 1`）并写 `diag`。两层职责不同，别把 UI 该拦的事交给 clamp。
+
+#### 始终粘贴为文本（`alwaysText`，2026-11-12）
+
+扩展名来自 `pasteFileName` 的内容嗅探，而嗅探是启发式：一份 9.7 MB 的 macOS 崩溃报告因为栈帧写着 `v8::Message::ErrorLevel() const + 24944`，命中了 `js` 分支（`\bconst ` 匹配 C++ 的 `const`），落成 `pasted-text-1.js`。`alwaysText` 就是关掉这个猜测的开关。
+
+- **默认 `false`**：对"粘贴一段代码"来说嗅探是更好的默认，所以不能反着来。
+- **`pasteFileName(text, index, textOnly = alwaysText)`**：第三个参数的默认值是**活的 `alwaysText`**，不是 `false`。调用点忘了传参就会悄悄恢复嗅探——而这正是这个开关要关掉的东西，所以默认值必须跟着配置走。
+- **只改名字，不改 MIME**：`spillFile` 的 `type` 本来就是常量 `text/plain`，扩展名从来只是给读者的标签。
+- **宽松解析**：勾选框可能交出布尔、"on"、字符串或缺失。只有明确的真值才算开（`asFlag`），其余一律当关；这个字段判错的代价比阈值更大，因为它决定模型被告知"文件是什么"。
+- **立即生效，不追溯**：已经在输入框里的附件不会被改名，和阈值一样只影响之后的粘贴。
 
 设置页注册在 `settings.plugins.tab`（设置 → 插件 → 一张卡），由 `configForms` 的镜像订阅驱动；只有命名空间真的被服务时才注册，所以没配设置域的部署看不到任何痕迹。
 
