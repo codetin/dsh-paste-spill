@@ -14,7 +14,7 @@ Inbound large-paste handling for the DeepSeek Harness composer: a **4–50 KB** 
 
 The two layers are independent and both measure the **pasted text**, not the draft: the fold layer changes what the composer looks like, the spill layer changes what the model receives. Pastes under the fold threshold are left entirely alone.
 
-Both thresholds are **configurable**: Settings → Plugins → **Paste folding**. Values are stored in the plugin's own config (persisted into the active profile's cordis patch, so they survive restarts and can also be edited by hand), and a change applies to new pastes immediately — no reload, and chips already in the composer are unaffected. The transcript card follows the fold threshold, so a paste behaves the same before and after it is sent. The page refuses an attachment threshold that is not above the fold threshold rather than silently rewriting it.
+Both thresholds and the **Always paste as text** checkbox are **configurable**: Settings → Plugins → **Paste folding**. Values are stored in the plugin's own config (persisted into the active profile's cordis patch, so they survive restarts and can also be edited by hand), and a change applies to new pastes immediately — no reload, and chips already in the composer are unaffected. The transcript card follows the fold threshold, so a paste behaves the same before and after it is sent. The page refuses an attachment threshold that is not above the fold threshold rather than silently rewriting it.
 
 ## The fold layer (4,000 – 50,000 bytes)
 
@@ -37,6 +37,14 @@ The floating chip band measures itself and publishes its height as `--dshps-chip
 ## The spill layer (≥ 50,000 bytes)
 
 A paste of 50,000 bytes or more is turned into a `File` and sent through the composer's existing attachment upload path, with a content-sniffed name (`pasted-text-<n>.json` / `.md` / `.py` / `.js` / `.html` / `.csv` / `.txt`). The result is a legal `file` block in the message, so the model receives a read-only host path through the stock attachment handling — no session format change and no model-side change.
+
+### Always paste as text
+
+The sniffing is a heuristic, and machine output defeats it: a macOS crash report was named `pasted-text-1.js` because its stack frames read `v8::Message::ErrorLevel() const`. With **Always paste as text** ticked on the settings page, every attachment is named `.txt` and the content sniffing is skipped entirely (the MIME type is already always `text/plain`; only the name changes).
+
+- **Off by default** — for a pasted code fragment, sniffing is still the better default.
+- Takes effect on the next paste, never retroactively: an attachment already in the composer keeps its name.
+- Only the filename changes. Thresholds, chips, the transcript card, the upload path and post-send behaviour are untouched.
 
 The host half watches `agent/inbox/inserted` for those paste files, resolves each one's host path from the attachment store, and publishes a `deliverables/presented` event on `agent/pre-step`, which the stock deliverables UI renders as a clickable card in the turn tail. Clicking the card opens the file in the right sidebar. The original text is then excised from the composer **in place** — the pasted run's own span is overwritten with `""`, never the whole draft, so other chips, typed text, the caret and undo history all survive.
 
