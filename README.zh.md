@@ -78,10 +78,10 @@ dsh-market 会在插件卡与详情页展示这两张图；它们声明在 [`scr
 
 ## 安装
 
-在 DeepSeek Harness CLI 里装进 **web** profile——已发布到 npm：[`dsh-paste-spill`](https://www.npmjs.com/package/dsh-paste-spill)：
+在 DeepSeek Harness CLI 里装进 **web** profile——已发布到 npm：[`@code_tin/dsh-paste-spill`](https://www.npmjs.com/package/@code_tin/dsh-paste-spill)：
 
 ```sh
-dsh plugin --profile web add dsh-paste-spill
+dsh plugin --profile web add @code_tin/dsh-paste-spill
 ```
 
 想从源码装？同一个包也可以直接从 GitHub 安装：
@@ -105,7 +105,7 @@ dsh plugin --profile web add github:winditer/dsh-paste-spill
 ## 实现结构
 
 ```
-包 dsh-paste-spill —— 一行 loader，两半
+包 @code_tin/dsh-paste-spill —— 一行 loader，两半
   浏览器半  lib/client.js     (dsh.client, platform: web)
     草稿 watcher + 粘贴事件
       4000-50000 → 注册 chip source，把粘贴段换成 chip 节点，
@@ -117,7 +117,7 @@ dsh plugin --profile web add github:winditer/dsh-paste-spill
                            → stock 交付卡 → 右侧栏预览
 ```
 
-一个包一行：`cordis.patch.yml` 只声明一次 `dsh-paste-spill`；loader 通过 `exports["."]` 导入宿主半，web-modules 扫描器则从同一个 `package.json` 的 `dsh.client` + `exports["./client"]` 发现浏览器半。
+一个包一行：`cordis.patch.yml` 只声明一次 `@code_tin/dsh-paste-spill`；loader 通过 `exports["."]` 导入宿主半，web-modules 扫描器则从同一个 `package.json` 的 `dsh.client` + `exports["./client"]` 发现浏览器半。
 
 宿主半另外导出 schemastery `Config`，两个阈值和 `alwaysText` 开关都标了 `.volatile()`。这是本插件唯一的设置面：设置域只认插件**自己**的 schema，所以"声明字段"才是把表单（以及本插件这一页）放到界面上的动作。`volatile` 的含义是写入更新运行中的插件、而不是 remount——这对本插件很关键，因为 remount 会把输入框里正被持有的 fold 全部丢掉。
 

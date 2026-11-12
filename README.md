@@ -78,10 +78,10 @@ dsh-market shows these on the plugin card and in the detail view; they are decla
 
 ## Install
 
-From the DeepSeek Harness CLI, into the **web** profile — published on npm as [`dsh-paste-spill`](https://www.npmjs.com/package/dsh-paste-spill):
+From the DeepSeek Harness CLI, into the **web** profile — published on npm as [`@code_tin/dsh-paste-spill`](https://www.npmjs.com/package/@code_tin/dsh-paste-spill):
 
 ```sh
-dsh plugin --profile web add dsh-paste-spill
+dsh plugin --profile web add @code_tin/dsh-paste-spill
 ```
 
 Prefer the source? The same package installs straight from GitHub:
@@ -105,7 +105,7 @@ After install, the browser half is a page-level module: **refresh the page** (or
 ## How it works
 
 ```
-package dsh-paste-spill — one loader row, two halves
+package @code_tin/dsh-paste-spill — one loader row, two halves
   browser half  lib/client.js     (dsh.client, platform: web)
     draft watcher + paste events
       4000-50000 → register a chip source, replace the pasted run with a chip node,
@@ -117,7 +117,7 @@ package dsh-paste-spill — one loader row, two halves
                            → stock deliverables card → right-sidebar preview
 ```
 
-One package, one row: `cordis.patch.yml` declares `dsh-paste-spill` once, and the loader imports the host half through `exports["."]` while the web-modules scanner discovers the browser half from `dsh.client` plus `exports["./client"]` in the same `package.json`.
+One package, one row: `cordis.patch.yml` declares `@code_tin/dsh-paste-spill` once, and the loader imports the host half through `exports["."]` while the web-modules scanner discovers the browser half from `dsh.client` plus `exports["./client"]` in the same `package.json`.
 
 The host half also exports a schemastery `Config` with the two thresholds marked `.volatile()`. That is the plugin's only settings surface: the settings domain reads a plugin entry's own schema, so declaring the fields is what puts a form (and this plugin's page) on screen. `volatile` means a write updates the running plugin instead of remounting it — which matters here, because a remount would drop the folds the composer is currently holding.
 

@@ -189,7 +189,7 @@ this.editor.update(...)                        // 只有这条会 oi = e
 ## 架构
 
 ```
-一个包 dsh-paste-spill（宿主半 exports["."] + 浏览器半 exports["./client"]，
+一个包 @code_tin/dsh-paste-spill（宿主半 exports["."] + 浏览器半 exports["./client"]，
 cordis.patch.yml 里只有一行；和已装的 dsh-image-gen / dsh-message-rail 同形）
 
 浏览器半  lib/client.js（dsh.client, platform: web）
@@ -204,7 +204,7 @@ cordis.patch.yml 里只有一行；和已装的 dsh-image-gen / dsh-message-rail
                  → 卡片按实测 rail 高度留出 padding-top，rail 不遮输入
                  │ 既有 remote 面 fileUploads.upload（仅 ≥50000 用）
                  ▼
-宿主半    dsh-paste-spill
+宿主半    @code_tin/dsh-paste-spill
   agent/inbox/inserted  → 记录本轮粘贴附件的宿主路径（不 append）
   agent/pre-step        → session.append("deliverables/presented", {turn, callId, files})
                  │
@@ -215,7 +215,7 @@ cordis.patch.yml 里只有一行；和已装的 dsh-image-gen / dsh-message-rail
 
 ### 为什么宿主半和浏览器半在同一个包里
 
-`cordis.patch.yml` 只插**一行**，这一行的包 `dsh-paste-spill` 同时声明了两半：
+`cordis.patch.yml` 只插**一行**，这一行的包 `@code_tin/dsh-paste-spill` 同时声明了两半：
 
 | 半 | 声明 | 加载方 |
 |---|---|---|
@@ -224,7 +224,7 @@ cordis.patch.yml 里只有一行；和已装的 dsh-image-gen / dsh-message-rail
 
 扫描器是**按加载器行**去找那个行包自己的 package.json（`dsh-client-modules/lib/index.js` 的 `resolveMeta(loaderName)`），所以一行就够；本机已装的 `dsh-image-gen` / `dsh-message-rail` / `dsh-prompt-optimizer` 全是这个形状。早先把浏览器半拆成独立包，只是沿用 DSH 自己的命名习惯（`@deepseek-ai/dsh-*` vs `@deepseek-ai/dsh-client-ui-*`），没有技术必要——代价是 profile 里多一个必须维护的名字，而那个名字在 9/28 的崩溃恢复里正好被抹掉了。
 
-浏览器半的模块 id 必须**等于包名**（`window.__ModuleLoader__.load({id:"dsh-paste-spill"})`）：浏览器加载器按被请求的名字注册模块，宿主也按行包的名字提供它。
+浏览器半的模块 id 必须**等于 entry id，不是包名**（`window.__ModuleLoader__.load({id:"dsh-paste-spill"})`；包改为 `@code_tin/dsh-paste-spill` 后这个 id 特意保持不变，见下）：浏览器加载器按被请求的名字注册模块，宿主也按行包的名字提供它。
 
 **关键收益**：≥50,000 走真实附件上传，消息里就是合法 `file` 块，`dsh-llm` 的 `fileHandleText` **自动**给模型只读宿主路径。**零模型侧改动、零 session 格式改动、零 stock 包改动。**
 
@@ -257,15 +257,16 @@ rm -rf /tmp/paste-probe && mkdir -p /tmp/paste-probe/profiles/probe/node_modules
 cd /tmp/paste-probe/profiles/probe
 cat > package.json <<'JSON'
 {"name":"probe","private":true,
- "dependencies":{"dsh-paste-spill":"link:<本仓库>/dsh-paste-spill"},
- "dsh":{"profile":{"bundles":["@deepseek-ai/dsh-base","dsh-paste-spill"],"patchReload":"live"}}}
+ "dependencies":{"@code_tin/dsh-paste-spill":"link:<本仓库>"},
+ "dsh":{"profile":{"bundles":["@deepseek-ai/dsh-base","@code_tin/dsh-paste-spill"],"patchReload":"live"}}}
 JSON
 printf '[]\n' > cordis.patch.yml
-ln -s <本仓库>/dsh-paste-spill node_modules/dsh-paste-spill
+mkdir -p node_modules/@code_tin   # 作用域包需要先有 scope 目录
+ln -s <本仓库> node_modules/@code_tin/dsh-paste-spill
 DSH_HOME=/tmp/paste-probe ds --profile probe --dump-config | grep -A 1 paste-spill
 ```
 
-预期输出**一行** `- id: paste-spill` / `name: dsh-paste-spill`（一个包两半，所以只有一行）。若名字在 bundles 里但包解析不出来，会打印 `dsh: skipping profile bundle "…"`：**不致命，但等于没装**。
+预期输出**一行** `- id: paste-spill` / `name: "@code_tin/dsh-paste-spill"`（一个包两半，所以只有一行）。若名字在 bundles 里但包解析不出来，会打印 `dsh: skipping profile bundle "…"`：**不致命，但等于没装**。
 
 三个容易踩的点：`DSH_HOME=/tmp` 时 profile 目录是 `/tmp/profiles/probe`（不是 `/tmp/probe`）；本版本只认 `DSH_HOME`，没有 `DSH_HOME_DIR`；`--profile desktop` 会被 CLI 直接拒绝（"managed exclusively by the Electron application"），桌面 profile 只能由应用内的插件管理器安装。
 
@@ -274,7 +275,7 @@ DSH_HOME=/tmp/paste-probe ds --profile probe --dump-config | grep -A 1 paste-spi
 ## 卸载
 
 ```bash
-rm ~/.dsh/profiles/desktop/node_modules/dsh-paste-spill
+rm ~/.dsh/profiles/desktop/node_modules/@code_tin/dsh-paste-spill
 # 再从 ~/.dsh/profiles/desktop/package.json 的 dsh.profile.bundles
 # 与 dependencies 里删掉这个名字（两处都要删，否则会被 reconcile 加回来）
 ```

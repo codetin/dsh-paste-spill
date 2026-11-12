@@ -551,7 +551,7 @@ test("the bundle registers under the package name and exports a plugin", () => {
   // it requested, and the host scanner serves this module under the row's package. A
   // mismatch would leave the plugin silently unloaded (two packages ago this file was
   // its own package, dsh-client-ui-paste-spill, hence the id it used to carry).
-  assert.equal(record.id, "dsh-paste-spill");
+  assert.equal(record.id, "@code_tin/dsh-paste-spill", "the module id must equal the package name");
   assert.equal(typeof exports.apply, "function");
   assert.deepEqual(exports.inject, ["slots", "conversation", "sessions", "locale", "inputTriggers"]);
 });
@@ -3987,4 +3987,35 @@ test("restoring defaults unchecks always-text", () => {
   findNode(tree, (node) => node.props !== null && node.props["data-dshps-settings-reset"] === "").props.onClick();
   tree = render({ t, form: null });
   assert.equal(box().props.checked, false, "defaults mean sniffing on");
+});
+
+test("a rejected save records WHY in the diag, so the failure is diagnosable", () => {
+  const { bundle, render } = statefulRender("PasteSpillSettings", { t: (key) => key, form: null });
+  const { setThresholds } = bundle.exports.__internals;
+  setThresholds({ foldBytes: 4000, spillBytes: 50000, alwaysText: false });
+  const t = (key) => key;
+  // A form that refuses the write the way ConfigForm does on a CAS conflict: resolve false.
+  const form = {
+    getSnapshot: () => ({ revision: 7, status: "ready", writable: true, value: { foldBytes: 4000, spillBytes: 50000 } }),
+    mutate: () => Promise.resolve(false),
+  };
+  let tree = render({ t, form });
+  findNode(tree, (node) => node.props !== null && node.props["data-dshps-settings-save"] === "").props.onClick();
+  return Promise.resolve().then(() => {
+    const rejected = bundle.diag().settingsSaveRejected;
+    assert.ok(rejected, "the rejection is recorded, not swallowed");
+    assert.equal(rejected.foldBytes, 4000);
+    assert.equal(rejected.spillBytes, 50000);
+    assert.equal(rejected.alwaysText, false);
+    assert.equal(rejected.snapshot.revision, 7, "the revision the write was based on");
+    assert.ok(Array.isArray(rejected.snapshot.keys));
+  });
+});
+
+test("a save with no bound form records the skip instead of failing silently", () => {
+  const { bundle, render } = statefulRender("PasteSpillSettings", { t: (key) => key, form: null });
+  const t = (key) => key;
+  const tree = render({ t, form: null });
+  findNode(tree, (node) => node.props !== null && node.props["data-dshps-settings-save"] === "").props.onClick();
+  assert.equal(bundle.diag().settingsSaveSkipped, "no-form");
 });
